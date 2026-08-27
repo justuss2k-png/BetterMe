@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#12151A" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%2312151A'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle' fill='%237FA88C' font-family='Georgia,serif'%3EL%3C/text%3E%3C/svg%3E" />
+<title>Levensledger</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #12151A; }
+  body { font-family: 'Inter', sans-serif; color: #EDEAE3; }
+  #root { min-height: 100vh; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  .display { font-family: 'Fraunces', serif; }
+  .row { transition: background 0.15s ease, border-color 0.15s ease; }
+  .check-btn { transition: transform 0.12s ease; }
+  .check-btn:active { transform: scale(0.9); }
+  .bar-fill { transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+  input, textarea, select { font-family: 'Inter', sans-serif; }
+  input::placeholder, textarea::placeholder { color: #5A6270; }
+  ::selection { background: #7FA88C55; }
+  @keyframes popIn { 0% { transform: scale(0.85); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+  .tabbtn { transition: color 0.15s ease; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const QUOTES = [
+  "Vandaag hoeft niet perfect, vandaag hoeft alleen gedaan.",
+  "Een dag afgevinkt is een dag bewijs dat je het kan.",
+  "Je bouwt dit niet in één dag, maar wel dag voor dag.",
+  "Kleine stappen tellen net zo hard mee als grote.",
+  "Terugval is geen nulpunt, morgen begin je gewoon verder.",
+  "Je hoeft vandaag niet te winnen, je hoeft vandaag te blijven staan.",
+  "Consistentie wint het altijd van intensiteit.",
+  "Wat je vandaag overslaat, mag je morgen gewoon weer oppakken.",
+  "Rust is ook vooruitgang, niet alleen actie.",
+  "Je telt niet de dagen, de dagen tellen voor jou.",
+  "Vergelijk jezelf alleen met wie je gisteren was.",
+  "Het gaat niet om nooit vallen, het gaat om altijd weer opstaan.",
+  "Je hebt al bewezen dat je kan volhouden. Vandaag ook weer.",
+];
+
+function todayStr() { const d = new Date(); const off = d.getTimezoneOffset(); return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10); }
+function dateStrOffset(daysAgo) { const d = new Date(); d.setDate(d.getDate() - daysAgo); const off = d.getTimezoneOffset(); return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10); }
+function addMonthsStr(dateStr, months) { const d = new Date(dateStr); d.setMonth(d.getMonth() + months); const off = d.getTimezoneOffset(); return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10); }
+function fmtNum(n) { return new Intl.NumberFormat("nl-NL").format(Math.round(n || 0)); }
+function fmtDate(ds) { if (!ds) return ""; const [y,m,d] = ds.split("-"); return `${d}-${m}-${y}`; }
+function quoteForDate(ds) { let h = 0; for (let i = 0; i < ds.length; i++) h = (h * 31 + ds.charCodeAt(i)) % QUOTES.length; return QUOTES[h]; }
+function uid() { return "id" + Date.now() + Math.floor(Math.random()*1000); }
+
+const CORE_HABITS_DEFAULT = [
+  { id: "gokvrij", name: "Niet gegokt", icon: "🚫", auto: true, value: 75 },
+  { id: "macros", name: "Macro's gehaald", icon: "🍽️" },
+  { id: "sport", name: "Getraind", icon: "🏋️" },
+  { id: "mediteren", name: "Gemediteerd", icon: "🧘" },
+  { id: "journal", name: "Journal geschreven", icon: "📓" },
+];
+const DEFAULT_EXTRA = [{ id: "sidehustle", name: "Side hustle", icon: "💼" }];
+const ICON_SET = ["💼","📖","🚶","💧","🎨","📞","🧹","☀️","🎯","🧩","🚫","🍽️","🏋️","🧘","📓","✨"];
+const MILESTONES = [7, 14, 30, 50, 100, 150, 200, 250, 300, 365];
+const STORAGE_KEY = "levensledger-v1";
+
+const inputStyle = { background: "#12151A", border: "1px solid #232830", borderRadius: 6, padding: "0.55rem 0.65rem", color: "#EDEAE3", fontSize: "0.82rem" };
+const btnPrimary = { background: "#7FA88C", color: "#12151A", border: "none", borderRadius: 6, padding: "0.55rem 0.9rem", fontWeight: 600, cursor: "pointer", fontSize: "0.82rem" };
+const btnGhost = { background: "transparent", color: "#8C93A0", border: "1px solid #232830", borderRadius: 6, padding: "0.55rem 0.9rem", cursor: "pointer", fontSize: "0.82rem" };
+const btnDanger = { background: "transparent", color: "#B5654A", border: "1px solid #B5654A55", borderRadius: 6, padding: "0.5rem 0.8rem", cursor: "pointer", fontSize: "0.78rem" };
+
+function defaultData() {
+  return {
+    startDate: todayStr(),
+    why: "",
+    checklist: { core: CORE_HABITS_DEFAULT, extra: DEFAULT_EXTRA },
+    entries: {},
+    debts: [],
+    debtPayments: {},
+    motor: { goalName: "Motor", goalAmount: 8000, contributions: [] },
+    agenda: [],
+    coachSessions: [],
+    wins: [],
+    triggers: [],
+  };
+}
+
+function App() {
+  const [data, setData] = useState(null);
+  const [tab, setTab] = useState("vandaag");
+  const [celebration, setCelebration] = useState(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      setData(parsed ? {
+        ...defaultData(), ...parsed,
+        checklist: { ...defaultData().checklist, ...(parsed.checklist || {}) },
+        motor: { ...defaultData().motor, ...(parsed.motor || {}) },
+        wins: parsed.wins || [],
+        triggers: parsed.triggers || [],
+        why: parsed.why || "",
+      } : defaultData());
+    } catch (e) { setData(defaultData()); }
+  }, []);
+
+  const persist = useCallback((next) => {
+    setData(next);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch (e) {}
+  }, []);
+
+  if (!data) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",color:"#8C93A0"}}>Laden…</div>;
+
+  const today = todayStr();
+
+  return (
+    <div style={{ minHeight: "100vh", paddingBottom: "5.5rem" }}>
+      {celebration && (
+        <div onClick={() => setCelebration(null)} style={{ position: "fixed", inset: 0, background: "#12151Aee", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem" }}>
+          <div style={{ animation: "popIn 0.35s ease", textAlign: "center", maxWidth: 340 }}>
+            <div style={{ fontSize: "3rem", marginBottom: "0.5rem" }}>{celebration.emoji || "🎉"}</div>
+            <p className="display" style={{ fontSize: "1.5rem", fontWeight: 600, margin: 0 }}>{celebration.title}</p>
+            <p style={{ color: "#8C93A0", marginTop: "0.5rem" }}>{celebration.subtitle}</p>
+            <p style={{ color: "#5A6270", fontSize: "0.8rem", marginTop: "1.5rem" }}>tik om verder te gaan</p>
+          </div>
+        </div>
+      )}
+
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1.25rem 0" }}>
+        <p style={{ color: "#7FA88C", letterSpacing: "0.08em", fontSize: "0.68rem", textTransform: "uppercase", margin: 0 }}>Levensledger</p>
+      </div>
+
+      {tab === "vandaag" && <Vandaag data={data} persist={persist} today={today} setCelebration={setCelebration} />}
+      {tab === "schulden" && <Schulden data={data} persist={persist} today={today} setCelebration={setCelebration} />}
+      {tab === "motor" && <Motor data={data} persist={persist} today={today} setCelebration={setCelebration} />}
+      {tab === "agenda" && <Agenda data={data} persist={persist} today={today} />}
+      {tab === "overzicht" && <Overzicht data={data} persist={persist} today={today} />}
+
+      <TabBar tab={tab} setTab={setTab} />
+    </div>
+  );
+}
+
+function TabBar({ tab, setTab }) {
+  const items = [
+    { id: "vandaag", label: "Vandaag", icon: "✓" },
+    { id: "schulden", label: "Schulden", icon: "📉" },
+    { id: "motor", label: "Motor", icon: "🏍️" },
+    { id: "agenda", label: "Agenda", icon: "🗓️" },
+    { id: "overzicht", label: "Overzicht", icon: "📊" },
+  ];
+  return (
+    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#161A20", borderTop: "1px solid #232830", paddingBottom: "env(safe-area-inset-bottom)", zIndex: 40 }}>
+      <div style={{ display: "flex", maxWidth: 640, margin: "0 auto" }}>
+        {items.map((it) => (
+          <button key={it.id} onClick={() => setTab(it.id)} className="tabbtn" style={{
+            flex: 1, background: "none", border: "none", padding: "0.6rem 0 0.5rem", cursor: "pointer",
+            color: tab === it.id ? "#7FA88C" : "#5A6270", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.15rem",
+          }}>
+            <span style={{ fontSize: "1.1rem" }}>{it.icon}</span>
+            <span style={{ fontSize: "0.62rem" }}>{it.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, color }) {
+  return (
+    <div style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "0.7rem 0.6rem" }}>
+      <p style={{ margin: 0, fontSize: "0.6rem", color: "#8C93A0", textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</p>
+      <p className="mono" style={{ margin: "0.25rem 0 0", fontSize: "1.05rem", fontWeight: 600, color }}>{value}</p>
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div style={{ maxWidth: 640, margin: "0 auto", padding: "1.6rem 1.25rem 0" }}>
+      {title && <h2 className="display" style={{ fontSize: "1.15rem", fontWeight: 600, marginBottom: "0.8rem" }}>{title}</h2>}
+      {children}
+    </div>
+  );
+}
+
+// ---------- VANDAAG ----------
+function Vandaag({ data, persist, today, setCelebration }) {
+  const [showExtras, setShowExtras] = useState(false);
+  const [habitEditor, setHabitEditor] = useState(null); // { listKey, id|null, name, icon, value }
+  const [editingWhy, setEditingWhy] = useState(false);
+  const [whyDraft, setWhyDraft] = useState(data.why || "");
+  const [winText, setWinText] = useState("");
+  const [showTriggerForm, setShowTriggerForm] = useState(false);
+  const [triggerForm, setTriggerForm] = useState({ context: "", helped: "" });
+
+  const entry = { core: [], extra: [], mood: null, note: "", ...(data.entries[today] || {}) };
+
+  function streakFor(habitId, coreOrExtra) {
+    let streak = 0;
+    let cursor = (data.entries[today]?.[coreOrExtra] || []).includes(habitId) ? 0 : 1;
+    while (true) {
+      const ds = dateStrOffset(cursor);
+      if ((data.entries[ds]?.[coreOrExtra] || []).includes(habitId)) { streak += 1; cursor += 1; } else break;
+    }
+    return streak;
+  }
+
+  function toggleCore(habit) {
+    const cur = data.entries[today]?.core || [];
+    const willAdd = !cur.includes(habit.id);
+    const nextCore = willAdd ? [...cur, habit.id] : cur.filter((id) => id !== habit.id);
+    const nextEntries = { ...data.entries, [today]: { ...(data.entries[today] || {}), core: nextCore } };
+
+    if (willAdd && habit.id === "gokvrij") {
+      const newStreak = streakFor(habit.id, "core") + 1;
+      if (MILESTONES.includes(newStreak)) {
+        setCelebration({ emoji: "🎉", title: `${newStreak} dagen clean`, subtitle: `€${fmtNum(newStreak * habit.value)} bespaard sinds start` });
+      }
+    }
+    persist({ ...data, entries: nextEntries });
+  }
+
+  function toggleExtra(habitId) {
+    const cur = data.entries[today]?.extra || [];
+    const next = cur.includes(habitId) ? cur.filter((id) => id !== habitId) : [...cur, habitId];
+    persist({ ...data, entries: { ...data.entries, [today]: { ...(data.entries[today] || {}), extra: next } } });
+  }
+
+  function setMood(m) {
+    persist({ ...data, entries: { ...data.entries, [today]: { ...(data.entries[today] || {}), mood: m } } });
+  }
+
+  function setNote(text) {
+    persist({ ...data, entries: { ...data.entries, [today]: { ...(data.entries[today] || {}), note: text } } });
+  }
+
+  function saveWhy() {
+    persist({ ...data, why: whyDraft.trim() });
+    setEditingWhy(false);
+  }
+
+  function openAddHabit(listKey) {
+    setHabitEditor({ listKey, id: null, name: "", icon: "🎯", value: "" });
+  }
+  function openEditHabit(listKey, h) {
+    setHabitEditor({ listKey, id: h.id, name: h.name, icon: h.icon, value: h.auto ? h.value : "" });
+  }
+  function saveHabitEditor() {
+    if (!habitEditor.name.trim()) return;
+    const { listKey, id } = habitEditor;
+    const list = data.checklist[listKey];
+    let nextList;
+    if (id) {
+      nextList = list.map((h) => h.id === id ? { ...h, name: habitEditor.name.trim(), icon: habitEditor.icon, ...(h.auto ? { value: Number(habitEditor.value) || h.value } : {}) } : h);
+    } else {
+      nextList = [...list, { id: uid(), name: habitEditor.name.trim(), icon: habitEditor.icon }];
+    }
+    persist({ ...data, checklist: { ...data.checklist, [listKey]: nextList } });
+    setHabitEditor(null);
+  }
+  function deleteHabit(listKey, id) {
+    persist({ ...data, checklist: { ...data.checklist, [listKey]: data.checklist[listKey].filter((h) => h.id !== id) } });
+  }
+
+  function addWin() {
+    if (!winText.trim()) return;
+    persist({ ...data, wins: [...data.wins, { id: uid(), date: today, text: winText.trim(), createdAt: Date.now() }] });
+    setWinText("");
+  }
+  function removeWin(id) {
+    persist({ ...data, wins: data.wins.filter((w) => w.id !== id) });
+  }
+
+  function logTrigger() {
+    if (!triggerForm.context.trim()) return;
+    const now = new Date();
+    const time = now.toTimeString().slice(0, 5);
+    persist({ ...data, triggers: [...data.triggers, { id: uid(), date: today, time, context: triggerForm.context.trim(), helped: triggerForm.helped.trim(), createdAt: Date.now() }] });
+    setTriggerForm({ context: "", helped: "" });
+    setShowTriggerForm(false);
+  }
+
+  const gokStreak = streakFor("gokvrij", "core");
+  const gokTotalDays = Object.values(data.entries).filter((e) => (e.core || []).includes("gokvrij")).length;
+  const gokSaved = gokTotalDays * 75;
+
+  const debtRemaining = data.debts.reduce((s, d) => s + Number(d.remaining || 0), 0);
+
+  const doneToday = entry.core.length + entry.extra.length;
+  const totalToday = data.checklist.core.length + data.checklist.extra.length;
+
+  const daysSinceStart = Math.max(1, Math.floor((new Date(today) - new Date(data.startDate)) / 86400000) + 1);
+
+  const moods = [{v:1,e:"😔"},{v:2,e:"😕"},{v:3,e:"😐"},{v:4,e:"🙂"},{v:5,e:"😄"}];
+  const recentWins = [...data.wins].sort((a, b) => b.createdAt - a.createdAt).slice(0, 3);
+  const todaysTriggers = data.triggers.filter((t) => t.date === today);
+
+  function HabitRow({ h, isDone, onToggle, listKey }) {
+    const s = streakFor(h.id, listKey);
+    return (
+      <div className="row" style={{ display: "flex", alignItems: "center", gap: "0.7rem", background: "#1B1F26", border: `1px solid ${isDone ? "#7FA88C55" : "#232830"}`, borderRadius: 10, padding: "0.75rem 0.9rem" }}>
+        <button className="check-btn" onClick={onToggle} style={{ width: 30, height: 30, borderRadius: "50%", border: `1.5px solid ${isDone ? "#7FA88C" : "#3A414C"}`, background: isDone ? "#7FA88C" : "transparent", cursor: "pointer", flexShrink: 0, color: "#12151A", fontSize: "0.9rem" }}>{isDone ? "✓" : ""}</button>
+        <span style={{ fontSize: "1.05rem" }}>{h.icon}</span>
+        <span style={{ flex: 1, fontSize: "0.9rem", fontWeight: 500 }}>{h.name}</span>
+        {h.auto && <span className="mono" style={{ fontSize: "0.68rem", color: "#C9A15C" }}>€{h.value}</span>}
+        {s > 0 && <span className="mono" style={{ fontSize: "0.68rem", color: "#7FA88C" }}>🔥{s}</span>}
+        <button onClick={() => openEditHabit(listKey, h)} style={{ background: "none", border: "none", color: "#3A414C", cursor: "pointer", fontSize: "0.85rem", padding: 2 }}>✎</button>
+        <button onClick={() => deleteHabit(listKey, h.id)} style={{ background: "none", border: "none", color: "#3A414C", cursor: "pointer", fontSize: "0.85rem", padding: 2 }}>✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Section>
+        <h1 className="display" style={{ fontSize: "1.9rem", fontWeight: 600, margin: "0 0 0.4rem", lineHeight: 1.1 }}>Dag <span className="mono">{daysSinceStart}</span></h1>
+        <p style={{ color: "#8C93A0", fontSize: "0.88rem", fontStyle: "italic", margin: "0 0 0.6rem" }}>{quoteForDate(today)}</p>
+
+        {!editingWhy ? (
+          <div onClick={() => { setWhyDraft(data.why || ""); setEditingWhy(true); }} style={{ cursor: "pointer", marginBottom: "1.2rem" }}>
+            {data.why ? (
+              <p style={{ margin: 0, fontSize: "0.85rem", color: "#C9A15C", borderLeft: "2px solid #C9A15C", paddingLeft: "0.6rem" }}>"{data.why}"</p>
+            ) : (
+              <p style={{ margin: 0, fontSize: "0.8rem", color: "#5A6270" }}>+ voeg je "waarom" toe</p>
+            )}
+          </div>
+        ) : (
+          <div style={{ marginBottom: "1.2rem" }}>
+            <textarea value={whyDraft} onChange={(e) => setWhyDraft(e.target.value)} placeholder="Waarom doe je dit ook alweer..." rows={2} style={{ ...inputStyle, width: "100%", resize: "vertical", marginBottom: "0.4rem" }} />
+            <button onClick={saveWhy} style={btnPrimary}>Opslaan</button>
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.5rem" }}>
+          <StatCard label="Schuld" value={`€${fmtNum(debtRemaining)}`} color="#EDEAE3" />
+          <StatCard label="Bespaard" value={`€${fmtNum(gokSaved)}`} color="#C9A15C" />
+          <StatCard label="Clean" value={`${gokStreak}d`} color="#7FA88C" />
+          <StatCard label="Vandaag" value={`${doneToday}/${totalToday}`} color="#EDEAE3" />
+        </div>
+      </Section>
+
+      <Section title="Checklist">
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {data.checklist.core.map((h) => (
+            <HabitRow key={h.id} h={h} isDone={entry.core.includes(h.id)} onToggle={() => toggleCore(h)} listKey="core" />
+          ))}
+          <button onClick={() => openAddHabit("core")} style={{ ...btnGhost, borderStyle: "dashed" }}>+ Basis-item</button>
+        </div>
+
+        {!showExtras ? (
+          <button onClick={() => setShowExtras(true)} style={{ ...btnGhost, width: "100%", marginTop: "0.6rem" }}>+ Meer toevoegen vandaag</button>
+        ) : (
+          <div style={{ marginTop: "0.6rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            {data.checklist.extra.map((h) => (
+              <HabitRow key={h.id} h={h} isDone={entry.extra.includes(h.id)} onToggle={() => toggleExtra(h.id)} listKey="extra" />
+            ))}
+            <button onClick={() => openAddHabit("extra")} style={{ ...btnGhost, borderStyle: "dashed" }}>+ Nieuw item</button>
+          </div>
+        )}
+
+        {habitEditor && (
+          <div style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "0.7rem", marginTop: "0.6rem" }}>
+            <input placeholder="Naam" value={habitEditor.name} onChange={(e) => setHabitEditor({ ...habitEditor, name: e.target.value })} style={{ ...inputStyle, width: "100%", marginBottom: "0.5rem" }} />
+            {habitEditor.value !== "" && (
+              <input placeholder="€ per dag" type="number" value={habitEditor.value} onChange={(e) => setHabitEditor({ ...habitEditor, value: e.target.value })} style={{ ...inputStyle, width: "100%", marginBottom: "0.5rem" }} />
+            )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginBottom: "0.5rem" }}>
+              {ICON_SET.map((ic) => (
+                <button key={ic} onClick={() => setHabitEditor({ ...habitEditor, icon: ic })} style={{ width: 30, height: 30, borderRadius: 6, background: habitEditor.icon === ic ? "#7FA88C22" : "#12151A", border: `1px solid ${habitEditor.icon === ic ? "#7FA88C" : "#232830"}`, cursor: "pointer" }}>{ic}</button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: "0.4rem" }}>
+              <button onClick={saveHabitEditor} style={btnPrimary}>{habitEditor.id ? "Opslaan" : "Toevoegen"}</button>
+              <button onClick={() => setHabitEditor(null)} style={btnGhost}>Annuleren</button>
+            </div>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Hoe voel je je?">
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          {moods.map((m) => (
+            <button key={m.v} onClick={() => setMood(m.v)} style={{ flex: 1, fontSize: "1.4rem", padding: "0.5rem 0", borderRadius: 8, background: entry.mood === m.v ? "#7FA88C22" : "#1B1F26", border: `1px solid ${entry.mood === m.v ? "#7FA88C" : "#232830"}`, cursor: "pointer" }}>{m.e}</button>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Wins">
+        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.7rem" }}>
+          <input placeholder="Kleine overwinning van vandaag..." value={winText} onChange={(e) => setWinText(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+          <button onClick={addWin} style={btnPrimary}>+</button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+          {recentWins.map((w) => (
+            <div key={w.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#1B1F26", border: "1px solid #232830", borderRadius: 8, padding: "0.5rem 0.8rem" }}>
+              <span style={{ fontSize: "0.85rem" }}>{w.text}</span>
+              <button onClick={() => removeWin(w.id)} style={{ background: "none", border: "none", color: "#3A414C", cursor: "pointer" }}>✕</button>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Gokdrang">
+        {!showTriggerForm ? (
+          <button onClick={() => setShowTriggerForm(true)} style={{ ...btnGhost, width: "100%", borderColor: "#B5654A55", color: "#B5654A" }}>
+            Gokdrang vastleggen {todaysTriggers.length > 0 ? `(vandaag ${todaysTriggers.length}x)` : ""}
+          </button>
+        ) : (
+          <div style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "0.8rem" }}>
+            <textarea placeholder="Wat speelde er net..." value={triggerForm.context} onChange={(e) => setTriggerForm({ ...triggerForm, context: e.target.value })} rows={2} style={{ ...inputStyle, width: "100%", resize: "vertical", marginBottom: "0.5rem" }} />
+            <input placeholder="Wat hielp (optioneel)" value={triggerForm.helped} onChange={(e) => setTriggerForm({ ...triggerForm, helped: e.target.value })} style={{ ...inputStyle, width: "100%", marginBottom: "0.5rem" }} />
+            <div style={{ display: "flex", gap: "0.4rem" }}>
+              <button onClick={logTrigger} style={btnPrimary}>Vastleggen</button>
+              <button onClick={() => setShowTriggerForm(false)} style={btnGhost}>Annuleren</button>
+            </div>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Notitie">
+        <textarea value={entry.note || ""} onChange={(e) => setNote(e.target.value)} placeholder="Hoe ging het vandaag..." rows={3} style={{ ...inputStyle, width: "100%", resize: "vertical" }} />
+      </Section>
+    </>
+  );
+}
+
+// ---------- SCHULDEN ----------
+function Schulden({ data, persist, today, setCelebration }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const emptyForm = { creditor: "", totalAmount: "", remaining: "", monthlyPayment: "", interestRate: "", termCount: "" };
+  const [form, setForm] = useState(emptyForm);
+
+  function saveDebt() {
+    if (!form.creditor.trim() || !form.totalAmount) return;
+    if (editingId) {
+      const next = data.debts.map((d) => d.id === editingId ? {
+        ...d, creditor: form.creditor.trim(), totalAmount: Number(form.totalAmount), remaining: Number(form.remaining || form.totalAmount),
+        monthlyPayment: Number(form.monthlyPayment || 0), interestRate: form.interestRate ? Number(form.interestRate) : null, termCount: form.termCount ? Number(form.termCount) : null,
+      } : d);
+      persist({ ...data, debts: next });
+    } else {
+      const debt = {
+        id: uid(), creditor: form.creditor.trim(), totalAmount: Number(form.totalAmount), remaining: Number(form.remaining || form.totalAmount),
+        monthlyPayment: Number(form.monthlyPayment || 0), interestRate: form.interestRate ? Number(form.interestRate) : null,
+        termCount: form.termCount ? Number(form.termCount) : null, termsPaid: 0,
+      };
+      persist({ ...data, debts: [...data.debts, debt] });
+    }
+    setForm(emptyForm); setShowAdd(false); setEditingId(null);
+  }
+
+  function startEdit(d) {
+    setForm({ creditor: d.creditor, totalAmount: d.totalAmount, remaining: d.remaining, monthlyPayment: d.monthlyPayment, interestRate: d.interestRate || "", termCount: d.termCount || "" });
+    setEditingId(d.id); setShowAdd(true);
+  }
+
+  function removeDebt(id) {
+    const next = data.debts.filter((d) => d.id !== id);
+    const nextPayments = { ...data.debtPayments }; delete nextPayments[id];
+    persist({ ...data, debts: next, debtPayments: nextPayments });
+  }
+
+  function registerPayment(debt) {
+    const amount = debt.monthlyPayment || 0;
+    if (amount <= 0) return;
+    const newRemaining = Math.max(0, debt.remaining - amount);
+    const nextDebts = data.debts.map((d) => d.id === debt.id ? { ...d, remaining: newRemaining, termsPaid: (d.termsPaid || 0) + 1 } : d);
+    const log = data.debtPayments[debt.id] || [];
+    const nextPayments = { ...data.debtPayments, [debt.id]: [...log, { date: today, amount }] };
+    persist({ ...data, debts: nextDebts, debtPayments: nextPayments });
+    if (newRemaining === 0) setCelebration({ emoji: "🏁", title: `${debt.creditor} afgelost!`, subtitle: "Eén schuld minder om te dragen." });
+  }
+
+  const totalOriginal = data.debts.reduce((s, d) => s + d.totalAmount, 0);
+  const totalRemaining = data.debts.reduce((s, d) => s + d.remaining, 0);
+  const totalPaid = totalOriginal - totalRemaining;
+  const overallPct = totalOriginal > 0 ? (totalPaid / totalOriginal) * 100 : 0;
+
+  return (
+    <>
+      <Section title="Schulden">
+        <div style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "1rem" }}>
+          <p style={{ margin: 0, fontSize: "0.68rem", color: "#8C93A0", textTransform: "uppercase" }}>Totaal afgelost</p>
+          <p className="mono" style={{ margin: "0.25rem 0 0.6rem", fontSize: "1.5rem", fontWeight: 600, color: "#7FA88C" }}>€{fmtNum(totalPaid)} <span style={{ color: "#5A6270", fontSize: "0.95rem" }}>/ €{fmtNum(totalOriginal)}</span></p>
+          <div style={{ background: "#232830", height: 8, borderRadius: 4, overflow: "hidden" }}>
+            <div className="bar-fill" style={{ width: `${overallPct}%`, height: "100%", background: "#7FA88C" }} />
+          </div>
+          <p style={{ margin: "0.5rem 0 0", fontSize: "0.75rem", color: "#8C93A0" }}>Nog €{fmtNum(totalRemaining)} te gaan</p>
+        </div>
+      </Section>
+
+      <Section>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.7rem" }}>
+          {data.debts.map((d) => {
+            const pct = d.totalAmount > 0 ? Math.min(100, ((d.totalAmount - d.remaining) / d.totalAmount) * 100) : 0;
+            const monthsLeft = d.monthlyPayment > 0 ? Math.ceil(d.remaining / d.monthlyPayment) : null;
+            const payoffDate = monthsLeft ? addMonthsStr(today, monthsLeft) : null;
+            return (
+              <div key={d.id} style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "0.9rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+                  <div onClick={() => startEdit(d)} style={{ cursor: "pointer" }}>
+                    <p style={{ margin: 0, fontWeight: 600, fontSize: "0.95rem" }}>{d.creditor}</p>
+                    <p className="mono" style={{ margin: "0.15rem 0 0", fontSize: "0.8rem", color: "#8C93A0" }}>€{fmtNum(d.remaining)} resterend</p>
+                  </div>
+                  <button onClick={() => removeDebt(d.id)} style={{ background: "none", border: "none", color: "#3A414C", cursor: "pointer", fontSize: "0.9rem" }}>✕</button>
+                </div>
+                <div style={{ background: "#232830", height: 5, borderRadius: 3, marginTop: "0.6rem", overflow: "hidden" }}>
+                  <div className="bar-fill" style={{ width: `${pct}%`, height: "100%", background: "#C9A15C" }} />
+                </div>
+                {d.termCount ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "3px", marginTop: "0.6rem" }}>
+                    {Array.from({ length: d.termCount }, (_, i) => (
+                      <div key={i} style={{ width: 12, height: 12, borderRadius: 3, background: i < (d.termsPaid || 0) ? "#7FA88C" : "#232830" }} />
+                    ))}
+                  </div>
+                ) : null}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.7rem" }}>
+                  <span style={{ fontSize: "0.72rem", color: "#5A6270" }}>
+                    {d.monthlyPayment > 0 ? `€${fmtNum(d.monthlyPayment)}/mnd` : "geen maandbedrag"}
+                    {d.interestRate ? ` · ${d.interestRate}% rente` : ""}
+                    {payoffDate ? ` · klaar ~${fmtDate(payoffDate)}` : ""}
+                  </span>
+                  {d.remaining > 0 && d.monthlyPayment > 0 && (
+                    <button onClick={() => registerPayment(d)} style={btnPrimary}>Betaling</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {!showAdd ? (
+          <button onClick={() => { setShowAdd(true); setEditingId(null); setForm(emptyForm); }} style={{ ...btnGhost, width: "100%", marginTop: "0.8rem", borderStyle: "dashed" }}>+ Schuld toevoegen</button>
+        ) : (
+          <div style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "0.9rem", marginTop: "0.8rem" }}>
+            <input placeholder="Schuldeiser" value={form.creditor} onChange={(e) => setForm({ ...form, creditor: e.target.value })} style={{ ...inputStyle, width: "100%", marginBottom: "0.5rem" }} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+              <input placeholder="Totaalbedrag €" type="number" value={form.totalAmount} onChange={(e) => setForm({ ...form, totalAmount: e.target.value })} style={inputStyle} />
+              <input placeholder="Resterend € (nu al afgelost?)" type="number" value={form.remaining} onChange={(e) => setForm({ ...form, remaining: e.target.value })} style={inputStyle} />
+              <input placeholder="Maandbedrag €" type="number" value={form.monthlyPayment} onChange={(e) => setForm({ ...form, monthlyPayment: e.target.value })} style={inputStyle} />
+              <input placeholder="Rente % (optioneel)" type="number" value={form.interestRate} onChange={(e) => setForm({ ...form, interestRate: e.target.value })} style={inputStyle} />
+              <input placeholder="Aantal termijnen (optioneel)" type="number" value={form.termCount} onChange={(e) => setForm({ ...form, termCount: e.target.value })} style={{ ...inputStyle, gridColumn: "1 / -1" }} />
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem" }}>
+              <button onClick={saveDebt} style={btnPrimary}>{editingId ? "Opslaan" : "Toevoegen"}</button>
+              <button onClick={() => { setShowAdd(false); setEditingId(null); setForm(emptyForm); }} style={btnGhost}>Annuleren</button>
+            </div>
+          </div>
+        )}
+      </Section>
+    </>
+  );
+}
+
+// ---------- MOTOR ----------
+function Motor({ data, persist, today, setCelebration }) {
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [editGoal, setEditGoal] = useState(false);
+  const [goalForm, setGoalForm] = useState({ goalName: data.motor.goalName, goalAmount: data.motor.goalAmount });
+
+  const saved = data.motor.contributions.reduce((s, c) => s + Number(c.amount || 0), 0);
+  const pct = data.motor.goalAmount > 0 ? Math.min(100, (saved / data.motor.goalAmount) * 100) : 0;
+
+  const last30 = data.motor.contributions.filter((c) => c.date >= dateStrOffset(29)).reduce((s, c) => s + Number(c.amount || 0), 0);
+  const dailyAvg = last30 / 30;
+  const daysToGoal = dailyAvg > 0 ? Math.ceil((data.motor.goalAmount - saved) / dailyAvg) : null;
+
+  function addContribution() {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) return;
+    const wasBelow = saved < data.motor.goalAmount;
+    const nextContribs = [...data.motor.contributions, { id: uid(), date: today, amount: amt, source: "manual", note: note.trim() }];
+    const nextSaved = saved + amt;
+    persist({ ...data, motor: { ...data.motor, contributions: nextContribs } });
+    if (wasBelow && nextSaved >= data.motor.goalAmount) {
+      setCelebration({ emoji: "🏍️", title: "Doel bereikt!", subtitle: `Je hebt €${fmtNum(data.motor.goalAmount)} gespaard voor je ${data.motor.goalName}.` });
+    }
+    setAmount(""); setNote("");
+  }
+
+  function removeContribution(id) {
+    persist({ ...data, motor: { ...data.motor, contributions: data.motor.contributions.filter((c) => c.id !== id) } });
+  }
+
+  function saveGoal() {
+    persist({ ...data, motor: { ...data.motor, goalName: goalForm.goalName.trim() || "Motor", goalAmount: Number(goalForm.goalAmount) || 1 } });
+    setEditGoal(false);
+  }
+
+  const recent = [...data.motor.contributions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12);
+
+  return (
+    <>
+      <Section>
+        <div style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "1.1rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+            <div onClick={() => setEditGoal(!editGoal)} style={{ cursor: "pointer" }}>
+              <p style={{ margin: 0, fontSize: "0.68rem", color: "#8C93A0", textTransform: "uppercase" }}>{data.motor.goalName}</p>
+              <p className="mono" style={{ margin: "0.2rem 0 0", fontSize: "1.7rem", fontWeight: 600, color: "#C9A15C" }}>€{fmtNum(saved)}</p>
+            </div>
+            <span style={{ fontSize: "2rem" }}>🏍️</span>
+          </div>
+          <div style={{ background: "#232830", height: 8, borderRadius: 4, marginTop: "0.8rem", overflow: "hidden" }}>
+            <div className="bar-fill" style={{ width: `${pct}%`, height: "100%", background: "#C9A15C" }} />
+          </div>
+          <p style={{ margin: "0.5rem 0 0", fontSize: "0.75rem", color: "#8C93A0" }}>
+            {Math.round(pct)}% van €{fmtNum(data.motor.goalAmount)} {daysToGoal ? `· ~${daysToGoal} dagen bij dit tempo` : ""}
+          </p>
+        </div>
+
+        {editGoal && (
+          <div style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "0.8rem", marginTop: "0.6rem" }}>
+            <input placeholder="Naam doel" value={goalForm.goalName} onChange={(e) => setGoalForm({ ...goalForm, goalName: e.target.value })} style={{ ...inputStyle, width: "100%", marginBottom: "0.5rem" }} />
+            <input placeholder="Doelbedrag €" type="number" value={goalForm.goalAmount} onChange={(e) => setGoalForm({ ...goalForm, goalAmount: e.target.value })} style={{ ...inputStyle, width: "100%", marginBottom: "0.5rem" }} />
+            <button onClick={saveGoal} style={btnPrimary}>Opslaan</button>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Bijboeken">
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <input placeholder="€ bedrag" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+          <input placeholder="notitie (optioneel)" value={note} onChange={(e) => setNote(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+          <button onClick={addContribution} style={btnPrimary}>+</button>
+        </div>
+      </Section>
+
+      <Section title="Recente boekingen">
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+          {recent.map((c) => (
+            <div key={c.id} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#1B1F26", border: "1px solid #232830", borderRadius: 8, padding: "0.55rem 0.8rem" }}>
+              <div>
+                <span className="mono" style={{ fontSize: "0.85rem", color: c.source === "gokvrij" ? "#7FA88C" : "#EDEAE3" }}>+€{fmtNum(c.amount)}</span>
+                <span style={{ fontSize: "0.72rem", color: "#5A6270", marginLeft: "0.5rem" }}>{c.source === "gokvrij" ? "niet gegokt" : (c.note || "handmatig")} · {fmtDate(c.date)}</span>
+              </div>
+              {<button onClick={() => removeContribution(c.id)} style={{ background: "none", border: "none", color: "#3A414C", cursor: "pointer" }}>✕</button>}
+            </div>
+          ))}
+          {recent.length === 0 && <p style={{ color: "#5A6270", fontSize: "0.82rem" }}>Nog geen boekingen.</p>}
+        </div>
+      </Section>
+    </>
+  );
+}
+
+// ---------- AGENDA ----------
+function Agenda({ data, persist, today }) {
+  const [title, setTitle] = useState("");
+  const [date, setDate] = useState("");
+  const [showDone, setShowDone] = useState(false);
+
+  function addTask() {
+    if (!title.trim()) return;
+    const task = { id: uid(), title: title.trim(), date: date || null, done: false, createdAt: Date.now() };
+    persist({ ...data, agenda: [...data.agenda, task] });
+    setTitle(""); setDate("");
+  }
+  function toggleTask(id) {
+    persist({ ...data, agenda: data.agenda.map((t) => t.id === id ? { ...t, done: !t.done } : t) });
+  }
+  function removeTask(id) {
+    persist({ ...data, agenda: data.agenda.filter((t) => t.id !== id) });
+  }
+
+  const open = data.agenda.filter((t) => !t.done);
+  const doneList = data.agenda.filter((t) => t.done);
+  const weekAhead = dateStrOffset(-7);
+
+  const overdue = open.filter((t) => t.date && t.date < today).sort((a,b) => a.date.localeCompare(b.date));
+  const todayTasks = open.filter((t) => t.date === today);
+  const upcoming = open.filter((t) => t.date && t.date > today && t.date <= weekAhead).sort((a,b) => a.date.localeCompare(b.date));
+  const later = open.filter((t) => t.date && t.date > weekAhead).sort((a,b) => a.date.localeCompare(b.date));
+  const noDate = open.filter((t) => !t.date).sort((a,b) => a.createdAt - b.createdAt);
+
+  function Group({ label, items, color }) {
+    if (items.length === 0) return null;
+    return (
+      <div style={{ marginBottom: "1.1rem" }}>
+        <p style={{ fontSize: "0.72rem", color: color || "#8C93A0", textTransform: "uppercase", letterSpacing: "0.04em", margin: "0 0 0.5rem" }}>{label}</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+          {items.map((t) => (
+            <div key={t.id} className="row" style={{ display: "flex", alignItems: "center", gap: "0.7rem", background: "#1B1F26", border: "1px solid #232830", borderRadius: 8, padding: "0.6rem 0.8rem" }}>
+              <button onClick={() => toggleTask(t.id)} style={{ width: 22, height: 22, borderRadius: "50%", border: "1.5px solid #3A414C", background: "transparent", cursor: "pointer", flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: "0.88rem" }}>{t.title}</span>
+              {t.date && <span className="mono" style={{ fontSize: "0.68rem", color: "#5A6270" }}>{fmtDate(t.date)}</span>}
+              <button onClick={() => removeTask(t.id)} style={{ background: "none", border: "none", color: "#3A414C", cursor: "pointer" }}>✕</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Section title="Agenda">
+        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.3rem" }}>
+          <input placeholder="Wat moet er gebeuren..." value={title} onChange={(e) => setTitle(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ ...inputStyle, width: 130 }} />
+          <button onClick={addTask} style={btnPrimary}>+</button>
+        </div>
+
+        <Group label="Achterstallig" items={overdue} color="#B5654A" />
+        <Group label="Vandaag" items={todayTasks} color="#7FA88C" />
+        <Group label="Komende 7 dagen" items={upcoming} />
+        <Group label="Later" items={later} />
+        <Group label="Zonder datum" items={noDate} />
+
+        {open.length === 0 && <p style={{ color: "#5A6270", fontSize: "0.85rem" }}>Niks openstaand. Rustig.</p>}
+
+        <button onClick={() => setShowDone(!showDone)} style={{ ...btnGhost, marginTop: "0.5rem" }}>
+          {showDone ? "Verberg afgerond" : `Toon afgerond (${doneList.length})`}
+        </button>
+        {showDone && (
+          <div style={{ marginTop: "0.6rem", display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+            {doneList.map((t) => (
+              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "0.7rem", padding: "0.4rem 0.2rem", opacity: 0.5 }}>
+                <button onClick={() => toggleTask(t.id)} style={{ width: 20, height: 20, borderRadius: "50%", background: "#7FA88C", border: "none", color: "#12151A", fontSize: "0.7rem", cursor: "pointer" }}>✓</button>
+                <span style={{ flex: 1, fontSize: "0.85rem", textDecoration: "line-through" }}>{t.title}</span>
+                <button onClick={() => removeTask(t.id)} style={{ background: "none", border: "none", color: "#3A414C", cursor: "pointer" }}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+    </>
+  );
+}
+
+// ---------- OVERZICHT ----------
+function Overzicht({ data, persist, today }) {
+  const [sessionNotes, setSessionNotes] = useState("");
+  const [sessionDate, setSessionDate] = useState(today);
+  const fileInputRef = useRef(null);
+
+  function addSession() {
+    if (!sessionNotes.trim()) return;
+    const session = { id: uid(), date: sessionDate, notes: sessionNotes.trim(), createdAt: Date.now() };
+    persist({ ...data, coachSessions: [...data.coachSessions, session] });
+    setSessionNotes("");
+  }
+  function removeSession(id) {
+    persist({ ...data, coachSessions: data.coachSessions.filter((s) => s.id !== id) });
+  }
+
+  function exportData() {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `levensledger-backup-${today}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function importData(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try { const parsed = JSON.parse(reader.result); if (parsed && parsed.entries) persist(parsed); }
+      catch (err) { alert("Kon dit bestand niet lezen."); }
+    };
+    reader.readAsText(file);
+  }
+
+  const weekDates = Array.from({ length: 7 }, (_, i) => dateStrOffset(i));
+  const totalHabits = data.checklist.core.length;
+  const weekChecks = weekDates.reduce((s, ds) => s + (data.entries[ds]?.core || []).length, 0);
+  const weekActiveDays = weekDates.filter((ds) => (data.entries[ds]?.core || []).length > 0).length;
+  const last35 = Array.from({ length: 35 }, (_, i) => 34 - i).map((d) => dateStrOffset(d));
+
+  const sessions = [...data.coachSessions].sort((a, b) => b.date.localeCompare(a.date));
+
+  return (
+    <>
+      <Section title="Deze week">
+        <div style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "0.9rem 1rem" }}>
+          <p className="mono" style={{ margin: 0, fontSize: "1.1rem" }}>{weekActiveDays}/7 dagen actief · {weekChecks}/{totalHabits * 7} checks</p>
+        </div>
+      </Section>
+
+      <Section title="35 dagen">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "5px" }}>
+          {last35.map((ds) => {
+            const count = (data.entries[ds]?.core || []).length;
+            const ratio = totalHabits ? count / totalHabits : 0;
+            return <div key={ds} style={{ aspectRatio: "1", borderRadius: 5, background: ratio === 0 ? "#1B1F26" : `rgba(127,168,140,${0.25 + ratio * 0.75})`, border: ds === today ? "1.5px solid #C9A15C" : "1px solid #232830" }} />;
+          })}
+        </div>
+      </Section>
+
+      <Section title="Coach-sessies">
+        <div style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 10, padding: "0.8rem", marginBottom: "0.8rem" }}>
+          <input type="date" value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} style={{ ...inputStyle, marginBottom: "0.5rem" }} />
+          <textarea placeholder="Wat is besproken, actiepunten..." value={sessionNotes} onChange={(e) => setSessionNotes(e.target.value)} rows={3} style={{ ...inputStyle, width: "100%", resize: "vertical", marginBottom: "0.5rem" }} />
+          <button onClick={addSession} style={btnPrimary}>Toevoegen</button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {sessions.map((s) => (
+            <div key={s.id} style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 8, padding: "0.7rem 0.9rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span className="mono" style={{ fontSize: "0.72rem", color: "#7FA88C" }}>{fmtDate(s.date)}</span>
+                <button onClick={() => removeSession(s.id)} style={{ background: "none", border: "none", color: "#3A414C", cursor: "pointer" }}>✕</button>
+              </div>
+              <p style={{ margin: "0.35rem 0 0", fontSize: "0.85rem", whiteSpace: "pre-wrap" }}>{s.notes}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Alle wins">
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+          {[...data.wins].sort((a, b) => b.createdAt - a.createdAt).map((w) => (
+            <div key={w.id} style={{ background: "#1B1F26", border: "1px solid #232830", borderRadius: 8, padding: "0.55rem 0.8rem" }}>
+              <span className="mono" style={{ fontSize: "0.68rem", color: "#7FA88C" }}>{fmtDate(w.date)}</span>
+              <p style={{ margin: "0.2rem 0 0", fontSize: "0.85rem" }}>{w.text}</p>
+            </div>
+          ))}
+          {data.wins.length === 0 && <p style={{ color: "#5A6270", fontSize: "0.82rem" }}>Nog geen wins vastgelegd.</p>}
+        </div>
+      </Section>
+
+      <Section title="Gokdrang-log">
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+          {[...data.triggers].sort((a, b) => b.createdAt - a.createdAt).map((t) => (
+            <div key={t.id} style={{ background: "#1B1F26", border: "1px solid #B5654A33", borderRadius: 8, padding: "0.55rem 0.8rem" }}>
+              <span className="mono" style={{ fontSize: "0.68rem", color: "#B5654A" }}>{fmtDate(t.date)} · {t.time}</span>
+              <p style={{ margin: "0.2rem 0 0", fontSize: "0.85rem" }}>{t.context}</p>
+              {t.helped && <p style={{ margin: "0.2rem 0 0", fontSize: "0.78rem", color: "#7FA88C" }}>hielp: {t.helped}</p>}
+            </div>
+          ))}
+          {data.triggers.length === 0 && <p style={{ color: "#5A6270", fontSize: "0.82rem" }}>Nog niks vastgelegd.</p>}
+        </div>
+      </Section>
+
+      <Section title="Backup">
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button onClick={exportData} style={btnPrimary}>Exporteren</button>
+          <button onClick={() => fileInputRef.current?.click()} style={btnGhost}>Importeren</button>
+          <input ref={fileInputRef} type="file" accept="application/json" onChange={importData} style={{ display: "none" }} />
+        </div>
+        <p style={{ color: "#3A414C", fontSize: "0.72rem", marginTop: "1.5rem" }}>Ondersteunend hulpmiddel naast je begeleiding, geen vervanging ervan.</p>
+      </Section>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
